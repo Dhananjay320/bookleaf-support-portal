@@ -12,7 +12,7 @@
     "start": "node --disable-warning=ExperimentalWarning src/index.js",
     "dev": "node --disable-warning=ExperimentalWarning --watch src/index.js",
     "seed": "node --disable-warning=ExperimentalWarning src/db/seed.js --reset",
-    "test": "node --disable-warning=ExperimentalWarning --test test/"
+    "test": "node --disable-warning=ExperimentalWarning --test \"test/*.test.js\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.1.0",
