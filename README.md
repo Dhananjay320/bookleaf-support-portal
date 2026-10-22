@@ -7,7 +7,7 @@ A support portal for BookLeaf Publishing with two interfaces:
 
 | | |
 |---|---|
-| **Live demo** | `<add your deployed URL here>` |
+| **Live demo** | Frontend: `<vercel URL>` · API: `<render URL>`  (free tier: first request may take ~40s while the API wakes up) |
 | **Stack** | React 18 + Vite · Node.js 22 + Express · SQLite (`node:sqlite`) · Anthropic Claude API · Server-Sent Events |
 | **Write-up** | [docs/WRITEUP.md](docs/WRITEUP.md) |
 
@@ -337,11 +337,20 @@ I also ran a browser end-to-end pass of both portals side by side: the author's 
 
 ## 6. Deployment
 
-The app deploys as **one service**: Express serves the API and the built React app on the same origin, so there is no CORS setup and no cross-site cookies.
+**Live setup: frontend on Vercel, API on Render.**
 
-**Render (recommended):** push to GitHub → New → Blueprint → select the repo. `render.yaml` sets the build (`npm run build`), start (`npm start`), health check and a generated `JWT_SECRET`. Add `ANTHROPIC_API_KEY` in the dashboard.
+```
+browser ──► Vercel (React build)  ──/api/* rewrite──►  Render (Express API + SQLite)
+```
 
-**Docker / Railway / Fly:** a `Dockerfile` is included (`docker build -t bookleaf . && docker run -p 4000:4000 -e JWT_SECRET=… -e ANTHROPIC_API_KEY=… bookleaf`).
+Vercel **proxies `/api/*` to Render** (`client/vercel.json`). The browser only ever talks to the Vercel domain, so the session cookie stays first-party (SameSite=Lax, Secure) and SSE works with no CORS or cross-site cookie configuration.
+
+1. **Render (API):** New → Blueprint → select the repo. `render.yaml` creates `bookleaf-support-api` with a health check and a generated `JWT_SECRET`. Add `ANTHROPIC_API_KEY` in the dashboard. If Render assigns a different URL than `https://bookleaf-support-api.onrender.com`, update the destination in `client/vercel.json`.
+2. **Vercel (UI):** New Project → import the repo → set **Root Directory** to `client` (Vite is auto-detected) → Deploy.
+
+**Single service alternative:** `npm run build && npm start` at the repo root serves the API and UI from one Express process. A `Dockerfile` is included for Railway, Fly or any container host (`docker build -t bookleaf . && docker run -p 4000:4000 -e JWT_SECRET=… -e ANTHROPIC_API_KEY=… bookleaf`).
+
+> Render's free tier sleeps after ~15 minutes idle, so the first request can take ~30–50s to wake it.
 
 > On free tiers the filesystem is ephemeral, so the SQLite file resets on redeploy or restart and is reseeded from the sample data. That suits a demo; for production, see below.
 

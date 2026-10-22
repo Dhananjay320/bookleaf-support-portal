@@ -1,11 +1,12 @@
-# One-click deploy on Render (Blueprint). A single web service serves both the API and the built React app.
+# Render Blueprint: the API only. The React app is deployed on Vercel (see client/vercel.json),
+# which proxies /api/* here so the browser sees a single origin.
 services:
   - type: web
-    name: bookleaf-support-portal
+    name: bookleaf-support-api
     runtime: node
     plan: free
-    buildCommand: npm run build
-    startCommand: npm start
+    buildCommand: npm ci --prefix server
+    startCommand: npm start --prefix server
     healthCheckPath: /api/v1/health
     envVars:
       - key: NODE_VERSION
