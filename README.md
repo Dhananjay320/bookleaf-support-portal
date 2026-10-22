@@ -7,7 +7,7 @@ A support portal for BookLeaf Publishing with two interfaces:
 
 | | |
 |---|---|
-| **Live demo** | Frontend: `<vercel URL>` · API: https://bookleaf-support-portal-8qko.onrender.com  (free tier: first request may take ~40s while the API wakes up) |
+| **Live demo** | **https://bookleaf-support-portal-ten.vercel.app** · API: https://bookleaf-support-portal-8qko.onrender.com  (free tier: first request may take ~40s while the API wakes up) |
 | **Stack** | React 18 + Vite · Node.js 22 + Express · SQLite (`node:sqlite`) · Anthropic Claude API · Server-Sent Events |
 | **Write-up** | [docs/WRITEUP.md](docs/WRITEUP.md) |
 
