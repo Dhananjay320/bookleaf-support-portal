@@ -32,7 +32,8 @@ The database is seeded from `bookleaf_sample_data.json` (10 authors, 18 books) o
 4. [API reference](#4-api-reference)
 5. [Testing](#5-testing)
 6. [Deployment](#6-deployment)
-7. [Known limitations & next steps](#7-known-limitations--next-steps)
+7. [Assumptions](#7-assumptions)
+8. [Known limitations & next steps](#8-known-limitations--next-steps)
 
 ---
 
@@ -362,7 +363,27 @@ Vercel **proxies `/api/*` to Render** (`client/vercel.json`). The browser only e
 
 ---
 
-## 7. Known limitations & next steps
+## 7. Assumptions
+
+Decisions I made where the brief left room for interpretation:
+
+- **Passwords:** the dataset has no credentials, so every author gets the demo password `author123`, and I created two admin accounts (`admin@bookleaf.com`, `ops@bookleaf.com`). Real deployments would use invites and password reset.
+- **Only authors raise tickets.** Admins respond to them but don't create them on an author's behalf.
+- **Ticket lifecycle:**
+  - an admin's first reply moves *Open → In Progress*;
+  - an author's reply reopens a *Resolved* ticket;
+  - *Closed* is final, and the author is asked to raise a new ticket.
+- **What authors see:** authors see status and category. Priority, AI reasoning and internal notes are internal only.
+- **Response-time targets** (Critical 4h, High 24h, Medium 48h, Low 72h) are my own reasonable defaults. The brief asked for urgent and old tickets to be easy to spot, but didn't define targets.
+- **"Today" is the real current date.** Royalty payout dates are computed from it with the quarterly + 45-day policy. The dataset's last payouts are from 2025, so some balances look overdue against today's date; the AI acknowledges this rather than hiding it.
+- **Royalty data:** the dataset has per-book totals only (no per-quarter ledger, no bank-linking status). Where a reply needs those facts, the draft inserts an `[Agent: …]` note for the support agent to fill in instead of guessing.
+- **ISBN errors are always at least High priority,** as the knowledge base says.
+- **Attachments are UI-only,** as the brief allowed: the filename is recorded, but no file is uploaded.
+- **Six example tickets are seeded** alongside the dataset so the admin queue isn't empty on first visit.
+- **LLM:** Google Gemini 2.5 Flash on its free tier, to keep the demo free to run (see [3.4](#34-model-choice)). Claude is supported through configuration.
+- **Hosting is free tier.** The database resets to the seed data when the API is redeployed or restarted, so tickets created during review may not persist across restarts.
+
+## 8. Known limitations & next steps
 
 - **Single instance.** The SSE bus and rate limits are in-memory. To scale out: Redis pub/sub (or Postgres `LISTEN/NOTIFY`) behind `services/realtime.js`, and a Redis rate-limit store.
 - **SQLite → Postgres** for durability and concurrent writers. The schema already uses FKs, constraints and indexes that map 1:1.
