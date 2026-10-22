@@ -68,7 +68,7 @@ export function templateReply({ ticket, author, book }) {
       `I'm really sorry the copies of ${title} didn't meet the standard you expect. ` +
       `Could you please reply with a few photos of the affected pages? Once our team verifies the issue we will arrange a free reprint, which typically takes 5–7 business days.`,
     'Distribution & Availability':
-      `Thank you for letting us know about ${title}'s availability. ` +
+      `Thank you for letting us know about the availability of ${title}. ` +
       `This is usually caused by a stock sync issue between our warehouse and the platform. I have asked our distribution team to trigger a re-sync, and the listing should be live again within 24–48 hours.`,
     'Book Status & Production Updates':
       `Thank you for checking in on ${title}. ` +
