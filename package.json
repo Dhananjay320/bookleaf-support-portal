@@ -1,0 +1,17 @@
+{
+  "name": "bookleaf-support-portal",
+  "version": "1.0.0",
+  "private": true,
+  "description": "BookLeaf Author Support & Communication Portal - React + Express + Claude",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "install:all": "npm ci --prefix server && npm ci --prefix client",
+    "build": "npm run install:all && npm run build --prefix client",
+    "start": "npm start --prefix server",
+    "dev:server": "npm run dev --prefix server",
+    "dev:client": "npm run dev --prefix client",
+    "test": "npm test --prefix server"
+  }
+}

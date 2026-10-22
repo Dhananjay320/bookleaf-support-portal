@@ -1,0 +1,18 @@
+# One-click deploy on Render (Blueprint). A single web service serves both the API and the built React app.
+services:
+  - type: web
+    name: bookleaf-support-portal
+    runtime: node
+    plan: free
+    buildCommand: npm run build
+    startCommand: npm start
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_VERSION
+        value: 22.13.0
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false   # set in the Render dashboard; never committed
