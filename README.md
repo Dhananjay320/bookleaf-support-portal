@@ -7,7 +7,7 @@ A support portal for BookLeaf Publishing with two interfaces:
 
 | | |
 |---|---|
-| **Live demo** | Frontend: `<vercel URL>` · API: `<render URL>`  (free tier: first request may take ~40s while the API wakes up) |
+| **Live demo** | Frontend: `<vercel URL>` · API: https://bookleaf-support-portal-8qko.onrender.com  (free tier: first request may take ~40s while the API wakes up) |
 | **Stack** | React 18 + Vite · Node.js 22 + Express · SQLite (`node:sqlite`) · Anthropic Claude API · Server-Sent Events |
 | **Write-up** | [docs/WRITEUP.md](docs/WRITEUP.md) |
 
@@ -345,7 +345,7 @@ browser ──► Vercel (React build)  ──/api/* rewrite──►  Render (E
 
 Vercel **proxies `/api/*` to Render** (`client/vercel.json`). The browser only ever talks to the Vercel domain, so the session cookie stays first-party (SameSite=Lax, Secure) and SSE works with no CORS or cross-site cookie configuration.
 
-1. **Render (API):** New → Blueprint → select the repo. `render.yaml` creates `bookleaf-support-api` with a health check and a generated `JWT_SECRET`. Add `ANTHROPIC_API_KEY` in the dashboard. If Render assigns a different URL than `https://bookleaf-support-api.onrender.com`, update the destination in `client/vercel.json`.
+1. **Render (API):** New → Blueprint → select the repo. `render.yaml` creates `bookleaf-support-api` with a health check and a generated `JWT_SECRET`. Add `ANTHROPIC_API_KEY` in the dashboard. If Render assigns a different URL than `https://bookleaf-support-portal-8qko.onrender.com`, update the destination in `client/vercel.json`.
 2. **Vercel (UI):** New Project → import the repo → set **Root Directory** to `client` (Vite is auto-detected) → Deploy.
 
 **Single service alternative:** `npm run build && npm start` at the repo root serves the API and UI from one Express process. A `Dockerfile` is included for Railway, Fly or any container host (`docker build -t bookleaf . && docker run -p 4000:4000 -e JWT_SECRET=… -e ANTHROPIC_API_KEY=… bookleaf`).
