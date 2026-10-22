@@ -1,0 +1,21 @@
+# Keeps the Render free-tier API awake for the demo.
+# Render spins a free web service down after 15 minutes without traffic; a cold
+# start then takes ~40s. Pinging every 10 minutes keeps the first request fast.
+# The health endpoint touches neither the database nor the AI provider.
+name: Keep API awake
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'   # GitHub runs schedules on a best-effort basis; delays of a few minutes are normal
+  workflow_dispatch: {}       # allow manual runs from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping health endpoint
+        run: |
+          # Generous timeout + retries: if the service was asleep, the first call waits for the cold start.
+          curl --fail --silent --show-error --max-time 90 --retry 3 --retry-delay 10 \
+            https://bookleaf-support-portal-8qko.onrender.com/api/v1/health
