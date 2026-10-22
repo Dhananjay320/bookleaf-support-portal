@@ -218,12 +218,24 @@ export function createTicket(user, { bookId, subject, description, attachmentNam
  * Classifies a ticket (AI first, keyword rules as fallback) and stores the result.
  * Admin overrides are never clobbered: only fields still owned by ai/rules/seed are updated.
  */
-export async function triageTicket(ticketId) {
+// Transient failures worth retrying: free-tier rate limits and short outages.
+const RETRYABLE_TRIAGE_FAILURES = new Set(['rate_limited', 'degraded', 'timeout', 'connection_error']);
+const TRIAGE_RETRY_DELAY_MS = 65_000; // free-tier quotas reset per minute
+const MAX_TRIAGE_RETRIES = 2;
+
+export async function triageTicket(ticketId, attempt = 0) {
   const row = loadTicketRow(ticketId);
   if (!row) return;
   const book = row.book_id ? getBook({ role: 'admin' }, row.book_id) : null;
 
   const result = await classifyTicket({ ticketId, subject: row.subject, description: row.description, book });
+
+  // Store the rule-based result now so the queue is usable immediately, and try AI again later.
+  if (result.source === 'rules' && RETRYABLE_TRIAGE_FAILURES.has(result.fallbackReason) && attempt < MAX_TRIAGE_RETRIES) {
+    setTimeout(() => {
+      triageTicket(ticketId, attempt + 1).catch((err) => console.error(`[triage] retry for ticket ${ticketId} failed`, err));
+    }, TRIAGE_RETRY_DELAY_MS).unref();
+  }
 
   getDb()
     .prepare(`UPDATE tickets SET

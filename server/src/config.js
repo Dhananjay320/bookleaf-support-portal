@@ -19,6 +19,17 @@ function resolveJwtSecret() {
   return crypto.randomBytes(32).toString('hex');
 }
 
+function resolveProvider() {
+  const explicit = process.env.AI_PROVIDER?.toLowerCase();
+  if (explicit) {
+    if (!['gemini', 'anthropic'].includes(explicit)) throw new Error(`AI_PROVIDER must be "gemini" or "anthropic", got "${explicit}".`);
+    return explicit;
+  }
+  if (process.env.GEMINI_API_KEY) return 'gemini';
+  if (process.env.ANTHROPIC_API_KEY) return 'anthropic';
+  return null;
+}
+
 export const config = Object.freeze({
   env,
   isProduction,
@@ -31,10 +42,19 @@ export const config = Object.freeze({
   corsOrigin: process.env.CORS_ORIGIN ?? null,
 
   ai: {
-    // The key is read from the environment by the server only; it is never sent to the browser.
-    apiKey: process.env.ANTHROPIC_API_KEY ?? null,
-    classifyModel: process.env.AI_CLASSIFY_MODEL ?? 'claude-opus-5-5',
-    draftModel: process.env.AI_DRAFT_MODEL ?? 'claude-opus-5-5',
+    // 'gemini' | 'anthropic'. If unset, the first provider with a key wins (Gemini, then Anthropic).
+    provider: resolveProvider(),
+    // Keys are read from the environment by the server only; they are never sent to the browser.
+    gemini: {
+      apiKey: process.env.GEMINI_API_KEY ?? null,
+      classifyModel: process.env.GEMINI_CLASSIFY_MODEL ?? 'gemini-2.5-flash',
+      draftModel: process.env.GEMINI_DRAFT_MODEL ?? 'gemini-2.5-flash',
+    },
+    anthropic: {
+      apiKey: process.env.ANTHROPIC_API_KEY ?? null,
+      classifyModel: process.env.AI_CLASSIFY_MODEL ?? 'claude-opus-5-5',
+      draftModel: process.env.AI_DRAFT_MODEL ?? 'claude-opus-5-5',
+    },
     classifyTimeoutMs: Number(process.env.AI_CLASSIFY_TIMEOUT_MS ?? 20_000),
     draftTimeoutMs: Number(process.env.AI_DRAFT_TIMEOUT_MS ?? 45_000),
     // Circuit breaker: after N consecutive failures, skip AI calls for a cooldown window

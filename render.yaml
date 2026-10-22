@@ -15,5 +15,5 @@ services:
         value: production
       - key: JWT_SECRET
         generateValue: true
-      - key: ANTHROPIC_API_KEY
+      - key: GEMINI_API_KEY
         sync: false   # set in the Render dashboard; never committed

@@ -4,7 +4,9 @@ import assert from 'node:assert/strict';
 // Isolated in-memory DB and no AI key: exercises the graceful-degradation path.
 process.env.DATABASE_PATH = ':memory:';
 process.env.JWT_SECRET = 'test-secret';
-delete process.env.ANTHROPIC_API_KEY;
+process.env.ANTHROPIC_API_KEY = ""; // empty (not deleted) so dotenv cannot refill it from .env
+process.env.GEMINI_API_KEY = ""; // empty (not deleted) so dotenv cannot refill it from .env
+process.env.AI_PROVIDER = ""; // empty (not deleted) so dotenv cannot refill it from .env
 
 const { seedIfEmpty } = await import('../src/db/seed.js');
 const { createApp } = await import('../src/app.js');

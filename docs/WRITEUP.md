@@ -13,7 +13,7 @@
 - *SQLite over Postgres:* reviewers can run it with zero setup. The relational schema (FKs, CHECK constraints) ports directly.
 - *SSE over WebSockets:* updates only flow one way, SSE reconnects automatically, and events carry only IDs, so all access control stays in the REST layer.
 - *In-process background triage and an in-memory event bus:* fine for one instance; I documented the swap to a durable queue and Redis pub/sub.
-- *Opus 5.5 as the default model:* reply quality is what authors experience. Triage and drafting have separate model settings, so triage can move to Haiku 5.5 once accuracy is measured.
+- *Gemini 2.5 Flash on the free tier for the demo:* it costs nothing, it is fast, and it handled BookLeaf's sample queries correctly. The cost is a low rate limit, which I handled with retries, a circuit breaker and delayed re-triage. The LLM sits behind a small provider interface, so Claude is a config switch away. For production I'd compare providers on real tickets rather than pick one up front.
 - *Attachments are UI-only,* as the brief allowed.
 
 **Graceful degradation was a first-class feature, not an afterthought.**

@@ -181,7 +181,7 @@ function resetDatabase() {
 }
 
 // `npm run seed` -> wipe and reseed.
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   if (process.argv.includes('--reset')) resetDatabase();
   seedIfEmpty();
   closeDb();

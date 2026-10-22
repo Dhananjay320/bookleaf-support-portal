@@ -114,26 +114,18 @@ Minimum payout threshold: ${formatInr(MIN_PAYOUT_THRESHOLD)}
  * whether to fall back to a template.
  */
 export async function draftReply({ ticket, author, book, messages }) {
-  const model = config.ai.draftModel;
-  const { text, model: usedModel } = await runCompletion({
+  const { text, model } = await runCompletion({
     purpose: 'draft',
     ticketId: ticket.id,
-    model,
-    send: (client) =>
-      client.beta.messages.create(
-        {
-          model,
-          max_tokens: 8000,
-          system: DRAFT_SYSTEM_PROMPT,
-          messages: [{ role: 'user', content: buildDraftUserMessage({ ticket, author, book, messages }) }],
-          output_config: { effort: 'medium' },
-          // If the model declines (safety classifier false positive), the API retries
-          // on a fallback model inside the same call instead of returning nothing.
-          betas: ['server-side-fallback-2026-07-01'],
-          fallbacks: 'default',
-        },
-        { timeout: config.ai.draftTimeoutMs, maxRetries: 1 },
-      ),
+    request: {
+      system: DRAFT_SYSTEM_PROMPT,
+      user: buildDraftUserMessage({ ticket, author, book, messages }),
+      maxTokens: 8000,
+      effort: 'medium',
+      refusalFallback: true,
+      timeoutMs: config.ai.draftTimeoutMs,
+      maxRetries: 1,
+    },
   });
-  return { body: text, model: usedModel };
+  return { body: text, model };
 }

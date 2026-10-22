@@ -77,26 +77,19 @@ Classify this ticket.`;
  * @returns {Promise<{ category, priority, confidence, reasoning, source: 'ai'|'rules' }>}
  */
 export async function classifyTicket({ ticketId, subject, description, book }) {
-  const model = config.ai.classifyModel;
   try {
     const { text } = await runCompletion({
       purpose: 'classify',
       ticketId,
-      model,
-      send: (client) =>
-        client.messages.create(
-          {
-            model,
-            max_tokens: 2048,
-            system: CLASSIFY_SYSTEM_PROMPT,
-            messages: [{ role: 'user', content: buildUserMessage({ subject, description, book }) }],
-            output_config: {
-              effort: 'low',
-              format: { type: 'json_schema', schema: CLASSIFICATION_SCHEMA },
-            },
-          },
-          { timeout: config.ai.classifyTimeoutMs, maxRetries: 2 },
-        ),
+      request: {
+        system: CLASSIFY_SYSTEM_PROMPT,
+        user: buildUserMessage({ subject, description, book }),
+        maxTokens: 2048,
+        effort: 'low',
+        jsonSchema: CLASSIFICATION_SCHEMA,
+        timeoutMs: config.ai.classifyTimeoutMs,
+        maxRetries: 2,
+      },
     });
     const parsed = ClassificationResult.parse(JSON.parse(text));
     return { ...parsed, source: 'ai' };
@@ -105,6 +98,7 @@ export async function classifyTicket({ ticketId, subject, description, book }) {
       // JSON/schema problems land here; log and degrade like any other AI failure.
       console.warn(`[ai] classification output rejected for ticket ${ticketId}: ${err.message}`);
     }
-    return { ...classifyWithRules({ subject, description }), source: 'rules' };
+    // fallbackReason lets the caller decide whether retrying later is worthwhile.
+    return { ...classifyWithRules({ subject, description }), source: 'rules', fallbackReason: err.message };
   }
 }

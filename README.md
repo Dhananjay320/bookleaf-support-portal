@@ -3,12 +3,12 @@
 A support portal for BookLeaf Publishing with two interfaces:
 
 - **Author Portal**: authors log in, see their books and royalties, raise support tickets and follow the conversation live.
-- **Support Console (admin)**: the ops team works an urgency-sorted queue. Claude classifies and prioritises every ticket and drafts a reply grounded in BookLeaf's knowledge base and the author's real account data. A human reviews and edits every reply before it is sent.
+- **Support Console (admin)**: the ops team works an urgency-sorted queue. An LLM (Google Gemini by default; Anthropic Claude also supported) classifies and prioritises every ticket and drafts a reply grounded in BookLeaf's knowledge base and the author's real account data. A human reviews and edits every reply before it is sent.
 
 | | |
 |---|---|
 | **Live demo** | **https://bookleaf-support-portal-ten.vercel.app** · API: https://bookleaf-support-portal-8qko.onrender.com  (free tier: first request may take ~40s while the API wakes up) |
-| **Stack** | React 18 + Vite · Node.js 22 + Express · SQLite (`node:sqlite`) · Anthropic Claude API · Server-Sent Events |
+| **Stack** | React 18 + Vite · Node.js 22 + Express · SQLite (`node:sqlite`) · Google Gemini API (Claude supported via config) · Server-Sent Events |
 | **Write-up** | [docs/WRITEUP.md](docs/WRITEUP.md) |
 
 ### Test credentials
@@ -47,7 +47,7 @@ npm ci --prefix client
 
 # 2. configure (optional: the app runs without an API key, using rule-based fallbacks)
 cp server/.env.example server/.env
-#   then set ANTHROPIC_API_KEY=... and JWT_SECRET=... in server/.env
+#   then set GEMINI_API_KEY=... (free at https://aistudio.google.com/apikey) in server/.env
 
 # 3. run API (http://localhost:4000) and UI (http://localhost:5173) in two terminals
 npm run dev --prefix server
@@ -66,9 +66,11 @@ Open http://localhost:5173. The Vite dev server proxies `/api` to Express, so th
 
 | Variable | Default | Notes |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | — | Server-side only. Without it, AI features degrade to rules/templates. |
-| `AI_CLASSIFY_MODEL` | `claude-opus-5-5` | Model for triage. `claude-haiku-5-5` is a much cheaper drop-in at high volume. |
-| `AI_DRAFT_MODEL` | `claude-opus-5-5` | Model for reply drafts. |
+| `AI_PROVIDER` | first provider with a key | `gemini` or `anthropic`. |
+| `GEMINI_API_KEY` | — | Server-side only. Without any AI key, AI features degrade to rules/templates. |
+| `GEMINI_CLASSIFY_MODEL` / `GEMINI_DRAFT_MODEL` | `gemini-2.5-flash` | Models for triage / drafts. |
+| `ANTHROPIC_API_KEY` | — | Optional alternative provider. |
+| `AI_CLASSIFY_MODEL` / `AI_DRAFT_MODEL` | `claude-opus-5-5` | Claude models for triage / drafts (`claude-haiku-5-5` is a cheaper triage option). |
 | `JWT_SECRET` | random per process in dev | **Required** in production. |
 | `PORT` | `4000` | |
 | `DATABASE_PATH` | `server/data/bookleaf.db` | `:memory:` is used by tests. |
@@ -92,7 +94,7 @@ Open http://localhost:5173. The Vite dev server proxies `/api` to Express, so th
 │                 │           └──► realtime bus ──► SSE fan-out        │
 │                 └──► ai/ (classifier, drafter, fallbacks, KB)        │
 │                         └──► llmClient: timeouts, retries, circuit   │
-│                              breaker, usage logging ──► Claude API   │
+│                              breaker, usage logging ──► LLM provider │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -106,7 +108,8 @@ server/src
 ├── routes/                  thin HTTP layer: validate → call service → respond
 ├── services/                business logic (ticket lifecycle, books, realtime bus)
 └── ai/
-    ├── llmClient.js         the only file that talks to Anthropic
+    ├── llmClient.js         provider selection, breaker, logging (the only entry point to an LLM)
+    ├── providers/           gemini.js, anthropic.js: one small adapter per vendor, same interface
     ├── classifier.js        triage prompt + JSON schema
     ├── drafter.js           reply prompt builder
     ├── knowledgeBase.js     BookLeaf KB split into sections + playbook examples
@@ -178,11 +181,13 @@ Two AI touchpoints, each with a non-AI fallback:
 
 All model calls go through `ai/llmClient.js`:
 
-- **Timeouts and retries:** 20s / 2 retries for background triage; 45s / 1 retry for drafts (an agent is waiting). The SDK retries 429/5xx/connection errors with backoff.
-- **Typed error mapping:** `RateLimitError`, `AuthenticationError`, `APIConnectionTimeoutError`, etc. map to a short reason that is logged in `ai_calls`.
-- **`stop_reason` is checked before content is trusted** (`refusal`, `max_tokens`, empty output → fallback).
+- **Provider adapters** (`ai/providers/`): each vendor's SDK is wrapped in a ~60-line adapter with the same interface (`complete`, `describeError`). Prompts, fallbacks, caching and logging are shared, so switching between Gemini and Claude is a config change.
+- **Timeouts and retries:** 20s / 2 retries for background triage; 45s / 1 retry for drafts (an agent is waiting). The SDKs retry 429/5xx/connection errors with backoff.
+- **Typed error mapping:** provider errors (e.g. Gemini `ApiError` 429/403, Anthropic `RateLimitError`) map to a short reason that is logged in `ai_calls`.
+- **The stop reason is checked before content is trusted:** safety blocks/refusals, truncation (`MAX_TOKENS`) and empty output all → fallback.
+- **Delayed AI retry for triage:** if triage fell back to rules because of a rate limit or short outage (common on free tiers, ~10 requests/min), the ticket keeps the rule-based result and AI triage retries automatically after ~65s (up to twice). Admin overrides are never overwritten.
 - **Circuit breaker:** after 3 consecutive provider failures, AI calls are skipped for 60s and fallbacks are used immediately. A provider outage therefore doesn't add 20–45s of latency to every action. The admin queue shows a banner while AI is degraded or disabled.
-- **Draft refusal fallback:** draft calls opt into the API's server-side `fallbacks: "default"` (beta `server-side-fallback-2026-07-01`). If the model declines a request (e.g. a safety-classifier false positive on an angry ticket), the API retries on a fallback model within the same call.
+- **Draft refusal fallback (Claude only):** draft calls opt into the Claude API's server-side `fallbacks: "default"` (beta `server-side-fallback-2026-07-01`). If the model declines a request (e.g. a safety-classifier false positive on an angry ticket), the API retries on a fallback model within the same call.
 - **What still works with the AI fully down:** tickets are created; triage falls back to keyword rules, flagged in the UI with a "Re-run AI triage" button; drafts fall back to a policy template; admins can always write and send replies manually. This path is exercised by the automated tests, which run without an API key.
 
 ### 3.3 Cost awareness
@@ -194,24 +199,25 @@ All model calls go through `ai/llmClient.js`:
 | **Book summary, not the whole account** | Only the book the ticket is about. |
 | **Capped history** | The original query + the last 6 messages, each truncated at 1,500 chars, so a long thread doesn't grow the prompt without bound. |
 | **Drafts are lazy and cached** | Generated only when an admin opens a ticket, then stored in `ai_drafts` keyed on the conversation length. Re-opening a ticket costs **0 tokens**; a new message (or "Regenerate") triggers a fresh draft. Concurrent opens of the same ticket share one in-flight request. |
-| **Effort tuned per task** | `low` for classification, `medium` for drafting. |
+| **Effort tuned per task** | `low` for classification (thinking disabled on Gemini 2.5 Flash), `medium` for drafting (small thinking budget). |
 | **Rate limit on ticket creation** | 20 per author per hour, which caps AI spend from abuse. |
 | **Usage logging** | Every call records model, input/output tokens, latency and errors in `ai_calls`, surfaced in `GET /admin/stats`. Spend is measurable, not guessed. |
 
 *Why not prompt caching?* The static parts of each prompt (~500–600 tokens) are below the minimum cacheable prefix, so caching would add nothing. Keeping the KB small and scoped is the bigger lever here. If the KB grew to several thousand tokens, it would move into a cached system block.
 
-Rough cost per ticket on the default model (Claude Opus 5.5, $4 / $20 per M tokens): triage ≈ 0.7k in + ~0.2k out ≈ **$0.007**; draft ≈ 1.5k in + ~0.6k out ≈ **$0.018**. That is about **$0.025 per ticket**, or ~$30/month at 1,200 tickets. These are estimates; the `ai_calls` table holds the real numbers.
+**Cost per ticket:** triage ≈ 0.7k input + ~0.1k output tokens; draft ≈ 1.5k input + ~0.3–0.6k output. On the Gemini free tier this demo costs **$0** (within the free quota). At BookLeaf's volume (~1,200 tickets/month) on paid Gemini 2.5 Flash it would be a few dollars a month. On Claude Opus 5.5 ($4 / $20 per M tokens) it would be about $0.025 per ticket, or ~$30/month. These are estimates; the `ai_calls` table holds the real numbers.
 
 ### 3.4 Model choice
 
-I used **Anthropic Claude** through the official `@anthropic-ai/sdk`:
-- **Quality of author-facing text is the product.** Replies must follow a specific tone guide, quote exact figures, own BookLeaf's mistakes, and avoid inventing facts. Claude Opus 5.5 follows long, specific instruction sets reliably, so it is the default for drafting.
-- **Structured outputs** guarantee schema-valid triage JSON with enum-constrained categories, so there is no regex parsing of free text.
-- **Effort control** lets one model run cheaply for classification (`low`) and more thoroughly for drafting.
-- **Tunable per task:** `AI_CLASSIFY_MODEL` and `AI_DRAFT_MODEL` are separate. At BookLeaf's volume, moving triage to `claude-haiku-5-5` ($0.10 / $0.50 per M tokens) cuts triage cost by ~40× and is the first change I'd measure, against a labelled sample of real tickets.
+The live demo uses **Google Gemini 2.5 Flash** through the official `@google/genai` SDK:
+- **Cost:** it has a free tier, so the demo runs at no cost, and it is one of the cheapest capable models when paid.
+- **Fit for the task:** both jobs are short, well-specified text tasks. Flash is fast (~1.5s for triage with thinking off) and supports **structured JSON output** (`responseJsonSchema`), so triage returns schema-valid, enum-constrained categories with no free-text parsing. The output is still re-validated with zod.
+- **Measured, not assumed:** I ran BookLeaf's own sample queries from the brief through the triage prompt: all 6 that reached the model got the expected category and priority (the rest hit the free-tier rate limit and correctly fell back to rules). Drafts quoted exact account figures, owned BookLeaf's errors and gave the policy timelines.
+- **Trade-off:** the free tier has a low rate limit (~10 requests/min). That is handled by retries, the delayed triage retry and the circuit breaker. In production I'd use the paid tier.
+- **Not locked in:** the same prompts run on **Anthropic Claude** (`AI_PROVIDER=anthropic`, adapter in `ai/providers/anthropic.js`). For production I'd A/B the providers on a labelled set of real tickets and on how much agents edit the drafts. A stronger model for drafts (e.g. Claude Opus 5.5) and a cheap one for triage is a likely outcome.
 
 ### 3.5 API key security
-- The key is read only from `process.env.ANTHROPIC_API_KEY` (`server/src/config.js`). It is never hardcoded, never logged, and never sent to the browser. All AI calls run server-side.
+- Keys are read only from environment variables (`GEMINI_API_KEY` / `ANTHROPIC_API_KEY`, in `server/src/config.js`). They are never hardcoded, never logged, and never sent to the browser. All AI calls run server-side.
 - `.env` is git-ignored; `server/.env.example` documents the variables with empty values.
 - On Render the key is set in the dashboard (`sync: false` in `render.yaml`).
 
@@ -345,10 +351,10 @@ browser ──► Vercel (React build)  ──/api/* rewrite──►  Render (E
 
 Vercel **proxies `/api/*` to Render** (`client/vercel.json`). The browser only ever talks to the Vercel domain, so the session cookie stays first-party (SameSite=Lax, Secure) and SSE works with no CORS or cross-site cookie configuration.
 
-1. **Render (API):** New → Blueprint → select the repo. `render.yaml` creates `bookleaf-support-api` with a health check and a generated `JWT_SECRET`. Add `ANTHROPIC_API_KEY` in the dashboard. If Render assigns a different URL than `https://bookleaf-support-portal-8qko.onrender.com`, update the destination in `client/vercel.json`.
+1. **Render (API):** New → Blueprint → select the repo. `render.yaml` creates `bookleaf-support-api` with a health check and a generated `JWT_SECRET`. Add `GEMINI_API_KEY` in the dashboard. Put the service's URL (here `https://bookleaf-support-portal-8qko.onrender.com`) in the destination in `client/vercel.json`.
 2. **Vercel (UI):** New Project → import the repo → set **Root Directory** to `client` (Vite is auto-detected) → Deploy.
 
-**Single service alternative:** `npm run build && npm start` at the repo root serves the API and UI from one Express process. A `Dockerfile` is included for Railway, Fly or any container host (`docker build -t bookleaf . && docker run -p 4000:4000 -e JWT_SECRET=… -e ANTHROPIC_API_KEY=… bookleaf`).
+**Single service alternative:** `npm run build && npm start` at the repo root serves the API and UI from one Express process. A `Dockerfile` is included for Railway, Fly or any container host (`docker build -t bookleaf . && docker run -p 4000:4000 -e JWT_SECRET=… -e GEMINI_API_KEY=… bookleaf`).
 
 > Render's free tier sleeps after ~15 minutes idle, so the first request can take ~30–50s to wake it.
 
@@ -361,7 +367,7 @@ Vercel **proxies `/api/*` to Render** (`client/vercel.json`). The browser only e
 - **Single instance.** The SSE bus and rate limits are in-memory. To scale out: Redis pub/sub (or Postgres `LISTEN/NOTIFY`) behind `services/realtime.js`, and a Redis rate-limit store.
 - **SQLite → Postgres** for durability and concurrent writers. The schema already uses FKs, constraints and indexes that map 1:1.
 - **Background jobs.** Triage runs in-process with `setImmediate`. A durable queue (BullMQ, pg-boss) would survive restarts and retry tickets left in `pending`.
-- **Attachments are UI-only** (the filename is recorded). Next: S3 signed uploads, and passing images of misprints to Claude's vision input for printing tickets.
-- **Evaluation.** Build a labelled set of real tickets to measure classification accuracy, compare `claude-haiku-5-5` vs `claude-opus-5-5` for triage, and track the admin edit distance between draft and sent reply as a quality metric.
+- **Attachments are UI-only** (the filename is recorded). Next: S3 signed uploads, and passing images of misprints to the model's vision input for printing tickets.
+- **Evaluation.** Build a labelled set of real tickets to measure classification accuracy, compare Gemini Flash, Claude Haiku and Claude Opus for triage and drafting, and track the admin edit distance between draft and sent reply as a quality metric.
 - **Ops features:** canned macros, bulk actions, email notifications to authors on reply, SLA escalation alerts, full-text search (FTS5), audit log of status changes, password reset and invite flow.
 - **Royalty data** is a snapshot from the dataset (per-book totals, no per-quarter ledger), so drafts reason from totals plus the computed calendar. A real integration would read the payout ledger and bank-linking status.

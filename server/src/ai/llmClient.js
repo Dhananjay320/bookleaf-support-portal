@@ -1,6 +1,7 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config.js';
 import { getDb } from '../db/index.js';
+import { createAnthropicProvider } from './providers/anthropic.js';
+import { createGeminiProvider } from './providers/gemini.js';
 
 /** Raised whenever the AI layer can't produce a usable result; callers fall back to rules/templates. */
 export class AiUnavailableError extends Error {
@@ -10,8 +11,23 @@ export class AiUnavailableError extends Error {
   }
 }
 
-// The API key is read from the server environment only and never reaches the frontend.
-const client = config.ai.apiKey ? new Anthropic({ apiKey: config.ai.apiKey }) : null;
+/**
+ * The active LLM provider (or null when no key is configured).
+ * Each provider exposes the same small interface, `complete(request)` and
+ * `describeError(err)`, so switching vendors is a config change, not a code change.
+ */
+function createProvider() {
+  const { provider, gemini, anthropic } = config.ai;
+  if (provider === 'gemini' && gemini.apiKey) {
+    return createGeminiProvider({ apiKey: gemini.apiKey, models: { classify: gemini.classifyModel, draft: gemini.draftModel } });
+  }
+  if (provider === 'anthropic' && anthropic.apiKey) {
+    return createAnthropicProvider({ apiKey: anthropic.apiKey, models: { classify: anthropic.classifyModel, draft: anthropic.draftModel } });
+  }
+  return null;
+}
+
+const provider = createProvider();
 
 // --- circuit breaker --------------------------------------------------------
 // If the provider is down, every request would otherwise wait for timeouts + retries.
@@ -31,21 +47,14 @@ function recordFailure() {
 }
 
 export function aiStatus() {
-  if (!client) return { enabled: false, state: 'disabled', message: 'No ANTHROPIC_API_KEY configured: using rule-based triage and reply templates.' };
-  if (Date.now() < breaker.openUntil) return { enabled: true, state: 'degraded', message: 'AI provider is failing; temporarily using rule-based fallbacks.' };
-  return { enabled: true, state: 'ok', message: 'AI assistance is active.' };
-}
-
-/** Maps SDK errors to a short, loggable reason. Most specific first. */
-function describeError(err) {
-  if (err instanceof Anthropic.RateLimitError) return 'rate_limited';
-  if (err instanceof Anthropic.AuthenticationError) return 'auth_failed';
-  if (err instanceof Anthropic.BadRequestError) return `bad_request: ${err.message}`;
-  if (err instanceof Anthropic.APIConnectionTimeoutError) return 'timeout';
-  if (err instanceof Anthropic.APIConnectionError) return 'connection_error';
-  if (err instanceof Anthropic.APIError) return `api_error_${err.status ?? 'unknown'}`;
-  if (err instanceof AiUnavailableError) return err.message;
-  return err?.message ?? 'unknown_error';
+  if (!provider) {
+    return { enabled: false, state: 'disabled', provider: null, message: 'No AI API key configured: using rule-based triage and reply templates.' };
+  }
+  const base = { enabled: true, provider: provider.name, models: provider.models };
+  if (Date.now() < breaker.openUntil) {
+    return { ...base, state: 'degraded', message: 'AI provider is failing; temporarily using rule-based fallbacks.' };
+  }
+  return { ...base, state: 'ok', message: `AI assistance is active (${provider.name}).` };
 }
 
 function logCall({ purpose, ticketId, model, success, usage, latencyMs, error }) {
@@ -54,49 +63,40 @@ function logCall({ purpose, ticketId, model, success, usage, latencyMs, error })
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(
       purpose, ticketId ?? null, model, success ? 1 : 0,
-      usage?.input_tokens ?? null, usage?.output_tokens ?? null, usage?.cache_read_input_tokens ?? null,
+      usage?.inputTokens ?? null, usage?.outputTokens ?? null, usage?.cacheReadTokens ?? null,
       latencyMs, error ?? null,
     );
 }
 
-/** Concatenates the text blocks of a response (skipping thinking blocks). */
-function textOf(response) {
-  return response.content
-    .filter((block) => block.type === 'text')
-    .map((block) => block.text)
-    .join('')
-    .trim();
-}
-
 /**
- * Executes one Messages API request with logging, breaker checks and uniform error mapping.
+ * Executes one completion with logging, breaker checks and uniform error mapping.
  *
  * @param {object} opts
- * @param {'classify'|'draft'} opts.purpose
+ * @param {'classify'|'draft'} opts.purpose - also selects the model configured for that task
  * @param {number} [opts.ticketId]
- * @param {(client: Anthropic) => Promise<Anthropic.Message>} opts.send - performs the SDK call
- * @param {string} opts.model - for logging
+ * @param {object} opts.request - provider-neutral request:
+ *   { system, user, maxTokens, effort: 'low'|'medium', jsonSchema?, refusalFallback?, timeoutMs, maxRetries }
  * @returns {Promise<{ text: string, model: string }>}
  */
-export async function runCompletion({ purpose, ticketId, model, send }) {
+export async function runCompletion({ purpose, ticketId, request }) {
   const status = aiStatus();
   if (status.state !== 'ok') throw new AiUnavailableError(status.state);
 
+  const model = provider.models[purpose];
   const started = Date.now();
   try {
-    const response = await send(client);
+    const result = await provider.complete({ ...request, model });
 
-    // Check stop_reason before trusting content.
-    if (response.stop_reason === 'refusal') throw new AiUnavailableError('refusal');
-    if (response.stop_reason === 'max_tokens') throw new AiUnavailableError('truncated');
-    const text = textOf(response);
-    if (!text) throw new AiUnavailableError('empty_response');
+    // Check why generation stopped before trusting the content.
+    if (result.finish === 'refusal') throw new AiUnavailableError('refusal');
+    if (result.finish === 'truncated') throw new AiUnavailableError('truncated');
+    if (!result.text) throw new AiUnavailableError('empty_response');
 
     recordSuccess();
-    logCall({ purpose, ticketId, model: response.model ?? model, success: true, usage: response.usage, latencyMs: Date.now() - started });
-    return { text, model: response.model ?? model };
+    logCall({ purpose, ticketId, model: result.model, success: true, usage: result.usage, latencyMs: Date.now() - started });
+    return { text: result.text, model: result.model };
   } catch (err) {
-    const reason = describeError(err);
+    const reason = err instanceof AiUnavailableError ? err.message : (provider.describeError(err) ?? err?.message ?? 'unknown_error');
     // Content-level problems (refusal, truncation) don't mean the provider is down.
     if (!(err instanceof AiUnavailableError)) recordFailure();
     logCall({ purpose, ticketId, model, success: false, latencyMs: Date.now() - started, error: reason });
@@ -104,6 +104,3 @@ export async function runCompletion({ purpose, ticketId, model, send }) {
     throw err instanceof AiUnavailableError ? err : new AiUnavailableError(reason, err);
   }
 }
-
-// Exposed for tests only.
-export const __breaker = breaker;
